@@ -1,0 +1,12 @@
+[Unit]
+Description=aurguard: check installed AUR packages for suspicious changes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# adjust the path if you installed aurguard somewhere else
+ExecStart=%h/.local/bin/aurguard watch --notify
+# a finding makes aurguard exit 1; that is a result, not a failed unit
+SuccessExitStatus=1
+Nice=10
