@@ -13,7 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # optional: plain-language explanation of flagged diffs via the Claude API
-llm = ["anthropic>=1.0", "pydantic>=2"]
+llm = ["anthropic>=2", "pydantic>=2"]
 
 [project.scripts]
 aurguard = "aurguard.cli:main"
