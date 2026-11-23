@@ -12,8 +12,10 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.optional-dependencies]
-# optional: plain-language explanation of flagged diffs via the Claude API
-llm = ["anthropic>=2", "pydantic>=2"]
+# optional: plain-language explanation of flagged diffs by an AI model (aurguard setup)
+claude = ["anthropic>=2", "pydantic>=2"]
+openai = ["openai>=2", "pydantic>=2"]  # ChatGPT, Gemini, DeepSeek and other OpenAI-compatible APIs
+ai = ["anthropic>=2", "openai>=2", "pydantic>=2"]
 
 [project.scripts]
 aurguard = "aurguard.cli:main"
