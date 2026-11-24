@@ -12,23 +12,116 @@ update in a week nobody reads it. aurguard reads it for you and only speaks
 up when something is worth a look.
 
 ```
-$ aurguard check
+$ aurguard upgrade
 someapp-bin 1.4.0-1 -> 1.4.0-2  installed 1.4.0-1 -> AUR 1.4.0-2, 1 commits, maintainer newguy
   MEDIUM  maintainer-changed
           Maintainer changed from olduser to newguy.
   HIGH    known-ioc  PKGBUILD:31
           npm install atomic-lockfile
           Matches a published indicator of the June 2026 AUR malware campaign.
-  MEDIUM  js-package-manager  PKGBUILD:31
-          npm install atomic-lockfile
-          Newly fetches packages from the npm registry at build time ...
+  gemini-4-hydrogen: likely_malicious - prepare() now installs the npm package
+          "atomic-lockfile", which has nothing to do with building someapp ...
 
 44 package bases, 1 with findings, 21 quiet
+
+Something was found. Run `paru -Sua` anyway? [y/N]:
 ```
 
-Python 3.11+, standard library only. Nothing from the AUR is ever executed or
-checked out: package repositories are kept as bare git clones and files are
-read with `git show`.
+Nothing from the AUR is ever executed or checked out: package repositories are
+kept as bare git clones and files are only read with `git show`.
+
+## Requirements
+
+**Required**
+
+| what | why |
+|---|---|
+| Arch Linux (or a derivative) with `pacman` | `pacman -Qm` lists the installed AUR packages |
+| Python 3.11 or newer | the tool itself; standard library only |
+| `git` | fetching AUR package repositories |
+| internet access to `aur.archlinux.org` | AUR RPC and git |
+
+**Optional**
+
+| what | for |
+|---|---|
+| `paru` or `yay` | `aurguard upgrade` (check, then upgrade) |
+| `libnotify` (`notify-send`) | desktop notifications |
+| `systemd` user session | running `watch` on a timer |
+| an API key for Claude, ChatGPT, Gemini, DeepSeek or an OpenAI-compatible server | AI explanations of findings |
+| Python packages `anthropic` (Claude) or `openai` (everything else), plus `pydantic` | AI explanations; installed with the `[claude]`, `[openai]` or `[ai]` extra |
+
+## Install
+
+```
+git clone https://github.com/aerith2828/aurguard
+cd aurguard
+uv tool install .              # rules only
+uv tool install '.[ai]'        # with AI support for every provider
+aurguard setup
+```
+
+`pip install .` in a venv or `pipx install .` work too. To run from the
+checkout without installing: `python3 -m aurguard check`.
+
+## Setup
+
+`aurguard setup` asks a few questions in the terminal and writes
+`~/.config/aurguard/config.toml`:
+
+1. **AUR helper**: paru or yay (detected), and the arguments for upgrades,
+   e.g. `-Sua --ignore somepkg`.
+2. **AI provider**: none, Claude, ChatGPT, Gemini, DeepSeek or another
+   OpenAI-compatible API. Then the model (Enter takes the default), the API
+   key, whether to explain findings automatically, and an optional test
+   request.
+3. **Notifications**: desktop notifications for `watch`, and a webhook URL.
+4. **Timer**: optionally installs and enables a systemd user timer that runs
+   `aurguard watch` every 6 hours.
+
+The API key can live in the config file (created with mode `600`, plain text)
+or in an environment variable, which always wins over the file. When you
+switch providers, the stored key is dropped so it is never sent to the wrong
+company.
+
+For scripts and dotfiles there is a non-interactive form:
+
+```
+aurguard setup --set ai.provider=deepseek --set ai.auto_explain=true
+aurguard setup --show            # current settings, key masked
+```
+
+## Usage
+
+| command | compares | use it |
+|---|---|---|
+| `aurguard upgrade` | installed -> AUR, then runs paru/yay | instead of `paru -Sua` / `yay -Sua` |
+| `aurguard check` | installed version -> AUR | to look before upgrading yourself |
+| `aurguard watch` | last run -> AUR, remembers state | from a timer |
+| `aurguard audit` | every file at the AUR head | once, to check what you already have |
+
+Exit status: `0` nothing at or above `--fail-on` (default `high`), `1` findings,
+`2` error.
+
+### paru and yay
+
+`aurguard upgrade` works the same with both, because they take the same flags:
+
+```
+aurguard upgrade                                  # helper and arguments from setup (default: -Sua)
+aurguard upgrade -- -Sua --ignore opentabletdriver
+aurguard upgrade --helper yay -- -Sua --devel
+```
+
+- Everything after `--` goes to the helper unchanged.
+- Packages passed with `--ignore` and packages in `IgnorePkg` in
+  `/etc/pacman.conf` are left out of the check, since they won't be upgraded
+  anyway. `check` honours `IgnorePkg` too, unless you use `--include-ignored`.
+- If nothing reaches `--fail-on`, aurguard replaces itself with the helper, so
+  the helper's prompts and review screens work as usual.
+- If something does, aurguard asks before going on. Without a terminal it
+  stops, unless you pass `--yes`. If the check itself fails (no network,
+  AUR down), it never upgrades.
 
 ## How it works
 
@@ -42,15 +135,6 @@ read with `git show`.
 5. Every **added** line goes through a small set of rules. A long-standing
    `npm install` in an Electron package is not reported on every update, only
    when it first appears.
-
-| command | compares | use it |
-|---|---|---|
-| `aurguard check` | installed version -> AUR | before `paru -Sua` |
-| `aurguard watch` | last run -> AUR, remembers state | from a timer, with `--notify` |
-| `aurguard audit` | every file at the AUR head | once, to check what you already have |
-
-Exit status: `0` nothing at or above `--fail-on` (default `high`), `1` findings,
-`2` error. So `aurguard check && paru -Sua` does what it looks like it does.
 
 ## Rules
 
@@ -72,38 +156,43 @@ each with a one-line explanation that is printed next to the finding. Against
 the 44 AUR packages on my machine, a full `audit` flags one thing: Brave's
 setuid `chrome-sandbox`, which is real and expected.
 
-## Optional: ask Claude what a change does
+## AI explanations
 
-```
-pip install 'aurguard[llm]'
-export ANTHROPIC_API_KEY=...
-aurguard check --explain
-```
+| provider | default model | key from | extra |
+|---|---|---|---|
+| Claude (Anthropic) | `claude-opus-5-5` | `ANTHROPIC_API_KEY` | `[claude]` |
+| ChatGPT (OpenAI) | `gpt-6.2-astra` | `OPENAI_API_KEY` | `[openai]` |
+| Gemini (Google) | `gemini-4-hydrogen` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `[openai]` |
+| DeepSeek | `deepseek-flash` | `DEEPSEEK_API_KEY` | `[openai]` |
+| OpenAI-compatible (OpenRouter, Ollama, LM Studio, ...) | you choose | `AURGUARD_API_KEY` (optional for local servers) | `[openai]` |
 
-For packages with findings, the diff and the rule hits are sent to the Claude
-API, which answers with a verdict (`looks_benign` / `needs_attention` /
-`likely_malicious`), a short summary and the lines that matter. The model's
-answer is printed **next to** the rule findings and never replaces them: the
-diff was written by whoever pushed to the package, and an attacker can fill
-it with comments addressed to the model. The prompt tells the model to treat
-such text as a warning sign. Diffs without findings are never sent.
+`AURGUARD_API_KEY` overrides the key for any provider. Gemini is called through
+Google's OpenAI-compatible endpoint, so one client library covers everything
+except Claude.
 
-## Running it regularly
+Only packages with findings are sent: their diff and the rule hits. The model
+answers with a verdict (`looks_benign` / `needs_attention` / `likely_malicious`),
+a short summary and the lines that matter. Claude, ChatGPT and Gemini return
+schema-validated structured output. DeepSeek and generic servers only offer a
+JSON mode, so their answer is validated locally and rejected if it does not
+fit. The answer is printed **next to** the rule findings and never replaces
+them: the diff was written by whoever pushed to the package, and an attacker
+can fill it with comments addressed to the model. The prompt tells the model
+to treat such text as a warning sign.
 
-```
-pip install .                      # or: uv tool install .
-cp contrib/aurguard-watch.{service,timer} ~/.config/systemd/user/
-systemctl --user enable --now aurguard-watch.timer
-```
+Turn it on for a single run with `--explain`, or always (except for `audit`)
+with `ai.auto_explain` from setup. `--no-explain` turns it off for one run.
 
-`watch --notify` shows a desktop notification (`notify-send`) only when
-something is found. `--webhook URL` (or `AURGUARD_WEBHOOK`) posts to Discord,
-Slack or ntfy. Other URLs get JSON with the full report under `"aurguard"`,
+## Notifications
+
+`watch` shows a desktop notification (`notify-send`) only when something is
+found, unless that is turned off in setup. `--webhook URL` (or
+`AURGUARD_WEBHOOK`, or `notify.webhook` in the config) posts to Discord, Slack
+or ntfy. Any other URL gets JSON with the full report under `"aurguard"`,
 which is enough to hook it into n8n or similar.
 
-[`contrib/paru-guarded.sh`](contrib/paru-guarded.sh) wraps `paru` so that an
-upgrade stops when `check` finds something high-severity, or when the check
-itself fails.
+The systemd units that `setup` installs are also in [`contrib/`](contrib/), if
+you prefer to install them by hand.
 
 ## What it does not do
 
@@ -123,6 +212,7 @@ python3 -m pytest tests      # or: python3 -m unittest discover tests
 
 The end-to-end test builds a fake AUR repo where `npm install atomic-lockfile`
 is pushed without a version bump, and checks that both `check` and `watch`
-catch it.
+catch it. The AI providers are tested against fake clients, so the tests need
+no keys and make no network requests.
 
 MIT licensed.
